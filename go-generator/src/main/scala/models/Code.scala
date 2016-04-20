@@ -148,25 +148,24 @@ case class Code(form: InvocationForm) {
 
       "",
       Seq(
-        s"func ${publicName}FromMap(data interface{}) $publicName {",
+        s"func ${publicName}FromMap(data interface{}) ($publicName, error) {",
 	Seq(
           "b, err := json.Marshal(data)",
-	  "if err == nil {",
-          s"return ${publicName}FromJson(${bytes}.NewReader(b))".indent(1),
-          "} else {",
-          "panic(err)".indent(1),
-          "}"
+	  "if err != nil {",
+          s"return ${publicName}{}, err".indent(1),
+          "}",
+          s"return ${publicName}FromJson(${bytes}.NewReader(b))"
         ).mkString("\n").indent(1),
         "}"
       ).mkString("\n"),
 
       "",
       Seq(
-        s"func ${publicName}FromJson(bytes ${io}.Reader) $publicName {",
+        s"func ${publicName}FromJson(bytes ${io}.Reader) ($publicName, error) {",
         Seq(
           s"var $privateName $publicName",
           s"${json}.NewDecoder(bytes).Decode(&$privateName)",
-          s"return $privateName"
+          s"return $privateName, nil"
         ).mkString("\n").indent(1),
         "}"
       ).mkString("\n")
@@ -198,24 +197,23 @@ case class Code(form: InvocationForm) {
       ).mkString("\n"),
 
       Seq(
-        s"func ${unionName}FromMap(data interface{}) $unionName {",
+        s"func ${unionName}FromMap(data interface{}) ($unionName, error) {",
 	Seq(
           "b, err := json.Marshal(data)",
-	  "if err == nil {",
-          s"return ${unionName}FromJson(${bytes}.NewReader(b))".indent(1),
-          "} else {",
-          "panic(err)".indent(1),
-          "}"
+	  "if err != nil {",
+          s"return ${unionName}{}, err".indent(1),
+          "}",
+          s"return ${unionName}FromJson(${bytes}.NewReader(b))"
         ).mkString("\n").indent(1),
         "}"
       ).mkString("\n"),
 
       Seq(
-        s"func ${unionName}FromJson(bytes ${io}.Reader) $unionName {",
+        s"func ${unionName}FromJson(bytes ${io}.Reader) ($unionName, error) {",
 
         union.discriminator match {
           case None => {
-            "// TODO: Not yet supported"
+            """return nil, errors.New("Union types without discriminators are not yet supported")"""
           }
           case Some(discriminator) => {
             Seq(
@@ -234,30 +232,38 @@ case class Code(form: InvocationForm) {
                       dt match {
 
                         case Datatype.Primitive.Double => {
-                          s"""return $unionName{$typeName: ${imp("strconv")}.ParseFloat(el["value"].(string), 64)}"""
+                          s"""return $unionName{$typeName: ${imp("strconv")}.ParseFloat(el["value"].(string), 64)}, nil"""
                         }
 
                         case Datatype.Primitive.Integer => {
-                          s"""return $unionName{$typeName: ${imp("strconv")}.ParseInt(el["value"].(string), 10, 32)}"""
+                          s"""return $unionName{$typeName: ${imp("strconv")}.ParseInt(el["value"].(string), 10, 32)}, nil"""
                         }
 
                         case Datatype.Primitive.Long => {
-                          s"""return $unionName{$typeName: ${imp("strconv")}.ParseInt(el["value"].(string), 10, 64)}"""
+                          s"""return $unionName{$typeName: ${imp("strconv")}.ParseInt(el["value"].(string), 10, 64)}, nil"""
                         }
 
                         case Datatype.Primitive.Boolean | Datatype.Primitive.DateIso8601 | Datatype.Primitive.DateTimeIso8601 | Datatype.Primitive.Decimal | Datatype.Primitive.String | Datatype.Primitive.Uuid => {
-                          s"""return $unionName{$typeName: el["value"].(string)}"""
+                          s"""return $unionName{$typeName: el["value"].(string)}, nil"""
                         }
 
                         case Datatype.UserDefined.Enum(name) => {
                           val enumName = importBuilder.publicName(name)
-                          s"""return $unionName{$typeName: ${enumName}FromString(el["value"].(string))}"""
+                          s"""return ${enumName}FromString(el["value"].(string)), nil"""
                         }
 
                         case _ => {
                           responseBuilder.generate("el", dt, ResponseBuilder.FromMap) match {
-                            case None => "return nil"
-                            case Some(resp) => s"return $unionName{$typeName: $resp}"
+                            case None => "return nil, nil"
+                            case Some(resp) => {
+                              Seq(
+                                s"obj, err := $resp",
+                                "if err != nil {",
+                                s"return $unionName{}, err".indent(1),
+                                "}",
+                                s"return $unionName{$typeName: obj}, nil"
+                              ).mkString("\n")
+                            }
                           }
                         }
                       }
@@ -265,7 +271,7 @@ case class Code(form: InvocationForm) {
 
                   ).mkString("\n")
                 } ++ Seq(
-                  "default:\n" + s"""return $unionName{Undefined: el["$discriminator"].(string)}""".indent(1)
+                  "default:\n" + s"""return $unionName{Undefined: el["$discriminator"].(string)}, nil""".indent(1)
                 )
               ).mkString("\n"),
 
